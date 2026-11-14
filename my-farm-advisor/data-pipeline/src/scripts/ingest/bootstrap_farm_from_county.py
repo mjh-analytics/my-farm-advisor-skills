@@ -38,6 +38,8 @@ OVERPASS_URLS = [
     "https://overpass.kumi.systems/api/interpreter",
     "https://lz4.overpass-api.de/api/interpreter",
 ]
+# Overpass rejects requests without a User-Agent (HTTP 406).
+USER_AGENT = "my-farm-advisor/1.0 (data-pipeline; bootstrap_farm_from_county)"
 COUNTIES_PATH = shared_geoadmin_counties_dir() / "counties_usa.geojson"
 
 
@@ -97,12 +99,17 @@ def _load_target_county(state_fips: str, county_name: str) -> gpd.GeoDataFrame:
     return exact.iloc[[0]].copy()
 
 
-def _query_overpass_bbox(bbox: tuple[float, float, float, float]) -> dict:
+DEFAULT_LANDUSE = "farmland|orchard|vineyard|meadow"
+
+
+def _query_overpass_bbox(
+    bbox: tuple[float, float, float, float], landuse: str = DEFAULT_LANDUSE
+) -> dict:
     south, west, north, east = bbox
     query = f"""
     [out:json][timeout:180];
     (
-      way["landuse"~"farmland|orchard|vineyard|meadow"]({south},{west},{north},{east});
+      way["landuse"~"^({landuse})$"]({south},{west},{north},{east});
     );
     out geom;
     """
@@ -110,7 +117,12 @@ def _query_overpass_bbox(bbox: tuple[float, float, float, float]) -> dict:
     for endpoint in OVERPASS_URLS:
         for attempt in range(1, 4):
             try:
-                response = requests.post(endpoint, data={"data": query}, timeout=240)
+                response = requests.post(
+                    endpoint,
+                    data={"data": query},
+                    headers={"User-Agent": USER_AGENT},
+                    timeout=240,
+                )
                 response.raise_for_status()
                 return response.json()
             except Exception as exc:
@@ -179,6 +191,29 @@ def _osm_elements_to_fields(
     gdf["area_acres"] = gdf.to_crs("EPSG:5070").geometry.area / 4046.8564224
     gdf = gdf[gdf["area_acres"] > 0.5].copy()
     return gdf
+
+
+def _cdl_crop_share(
+    gdf: gpd.GeoDataFrame, *, state_fips: str, year: int, crop_codes: list[int]
+) -> pd.Series:
+    """Share of each polygon's CDL pixels (nodata excluded) in ``crop_codes``."""
+    import rasterio
+    from rasterstats import zonal_stats
+
+    sys.path.insert(0, str(_SCRIPTS_DIR / "ingest"))
+    from download_cdl import download_cdl
+
+    raster_path = download_cdl(year, state_fips)
+    with rasterio.open(raster_path) as src:
+        geoms = gdf.to_crs(src.crs).geometry
+    stats = zonal_stats(geoms, str(raster_path), categorical=True, nodata=0)
+    shares = []
+    for cats in stats:
+        cats = cats or {}
+        total = sum(cats.values())
+        hit = sum(v for k, v in cats.items() if int(k) in crop_codes)
+        shares.append(hit / total if total else 0.0)
+    return pd.Series(shares, index=gdf.index)
 
 
 def _sample_fields(gdf: gpd.GeoDataFrame, *, count: int, seed: int) -> gpd.GeoDataFrame:
@@ -304,6 +339,26 @@ def main() -> None:
         action="store_true",
         help="Run full farm pipeline after bootstrap",
     )
+    parser.add_argument(
+        "--landuse",
+        default=DEFAULT_LANDUSE,
+        help="Pipe-separated OSM landuse values to keep (e.g. 'farmland' to drop meadow)",
+    )
+    parser.add_argument(
+        "--min-acres", type=float, default=0.5, help="Drop clipped polygons smaller than this"
+    )
+    parser.add_argument(
+        "--max-acres", type=float, default=None, help="Drop clipped polygons larger than this"
+    )
+    parser.add_argument(
+        "--cdl-crop-codes",
+        default="",
+        help="Comma-separated CDL codes a field must mostly be (e.g. '1,5' = corn,soybeans). Off when empty.",
+    )
+    parser.add_argument("--cdl-year", type=int, default=2025)
+    parser.add_argument(
+        "--cdl-min-share", type=float, default=0.5, help="Minimum CDL share for --cdl-crop-codes"
+    )
     parser.add_argument("--force", action="store_true", help="Pass --force to run_farm_pipeline")
     args = parser.parse_args()
 
@@ -314,7 +369,7 @@ def main() -> None:
     bounds = county.total_bounds
     bbox = (float(bounds[1]), float(bounds[0]), float(bounds[3]), float(bounds[2]))
 
-    payload = _query_overpass_bbox(bbox)
+    payload = _query_overpass_bbox(bbox, args.landuse)
     fields = _osm_elements_to_fields(
         elements=payload.get("elements", []),
         county_geom=county_geom,
@@ -322,6 +377,27 @@ def main() -> None:
         county_fips=county_fips,
         county_name=county_name,
     )
+    eligible = len(fields)
+    if not fields.empty:
+        fields = fields[fields["area_acres"] >= args.min_acres]
+        if args.max_acres is not None:
+            fields = fields[fields["area_acres"] <= args.max_acres]
+    print(
+        f"Eligible OSM polygons: {eligible} -> {len(fields)} after "
+        f"landuse={args.landuse} acres=[{args.min_acres}, {args.max_acres}]"
+    )
+    crop_codes = [int(c) for c in args.cdl_crop_codes.split(",") if c.strip()]
+    if crop_codes and not fields.empty:
+        fields = fields.copy()
+        fields["cdl_crop_share"] = _cdl_crop_share(
+            fields, state_fips=args.state_fips, year=args.cdl_year, crop_codes=crop_codes
+        ).round(3)
+        before = len(fields)
+        fields = fields[fields["cdl_crop_share"] >= args.cdl_min_share]
+        print(
+            f"CDL {args.cdl_year} filter codes={crop_codes} share>={args.cdl_min_share}: "
+            f"{before} -> {len(fields)}"
+        )
     sampled = _sample_fields(fields, count=args.count, seed=args.seed)
     if sampled.empty:
         raise RuntimeError("No eligible farmland polygons found for requested county")
