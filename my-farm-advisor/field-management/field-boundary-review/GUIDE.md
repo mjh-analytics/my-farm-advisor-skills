@@ -29,6 +29,18 @@ csb-field-sampling / bootstrap  ->  field-boundary-review  ->  run_farm_pipeline
 - Fixing outlines: extend/trim an edge, cut out buildings or waterways, redraw a field
 - QC after a pipeline run (the viewer also shows weather, scenes, rotation, soil, report PNGs)
 
+## Two stages, one viewer
+
+The same `build_review_viewer.py` serves both stages, and both are supported:
+
+| Stage | What exists | What the viewer shows |
+|---|---|---|
+| **Before download** | `boundary/` only (original + edited outlines, candidates) | outlines, acres, shape flags, keep/drop, comments, pins, lines |
+| **After download** | full pipeline outputs | the same, plus CDL crop share and rotation, weather days, scene counts, soil, report images |
+
+Every data column is optional: missing files show as blank, not as errors. Rebuild the viewer
+at either stage; reviewer input (localStorage) carries over because field ids do not change.
+
 ## Files
 
 | File | Role |
