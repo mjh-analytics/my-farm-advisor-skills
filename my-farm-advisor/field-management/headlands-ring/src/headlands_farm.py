@@ -38,20 +38,13 @@ from shapely.geometry import mapping
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from headlands_ring import ACRES_PER_SQM, split_headlands_and_interior  # noqa: E402
 
-# Official USDA NASS CDL legend for the classes that occur in Corn Belt / Plains fields.
-# Unknown codes are kept as "CDL code N" (never dropped) so shares always sum to 100 %.
-CDL_NAMES = {
-    1: "Corn", 2: "Cotton", 4: "Sorghum", 5: "Soybeans", 6: "Sunflower", 12: "Sweet Corn",
-    21: "Barley", 23: "Spring Wheat", 24: "Winter Wheat", 26: "Dbl Crop WinWht/Soybeans",
-    27: "Rye", 28: "Oats", 36: "Alfalfa", 37: "Other Hay/Non Alfalfa", 41: "Sugarbeets",
-    42: "Dry Beans", 43: "Potatoes", 58: "Clover/Wildflowers", 59: "Sod/Grass Seed",
-    61: "Fallow/Idle Cropland", 111: "Open Water", 121: "Developed/Open Space",
-    122: "Developed/Low Intensity", 123: "Developed/Med Intensity",
-    124: "Developed/High Intensity", 131: "Barren", 141: "Deciduous Forest",
-    142: "Evergreen Forest", 143: "Mixed Forest", 152: "Shrubland", 176: "Grass/Pasture",
-    190: "Woody Wetlands", 195: "Herbaceous Wetlands", 205: "Triticale",
-    225: "Dbl Crop WinWht/Corn", 236: "Dbl Crop WinWht/Sorghum", 241: "Dbl Crop Corn/Soybeans",
-}
+# CDL class names come from the cdl-cropland skill (official USDA NASS legend), so there is
+# one legend in the repo. Unknown codes are kept as "CDL code N" (never dropped), so zone
+# shares always sum to 100 %.
+_CDL_SRC = Path(__file__).resolve().parents[3] / "soil" / "cdl-cropland" / "src"
+sys.path.insert(0, str(_CDL_SRC))
+from cdl_reporting import CDL_CODES as CDL_NAMES  # noqa: E402
+
 CDL_NODATA = 0
 
 
