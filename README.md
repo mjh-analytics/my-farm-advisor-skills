@@ -509,6 +509,8 @@ geneticist — gets both without us choosing their agent harness for them.
 | Weather | [`weather/INDEX.md`](my-farm-advisor/weather/INDEX.md) | NASA POWER weather and derived analysis |
 | Data pipeline | [`data-pipeline/README.md`](my-farm-advisor/data-pipeline/README.md) | Country-aware ingest, per-field rendering, runtime management |
 
+**Custom EDA skill: `field-level-eda`** ([`my-farm-advisor/eda/field-level-eda/`](my-farm-advisor/eda/field-level-eda/GUIDE.md)) runs a deterministic, static field-level analysis for one grower and a chosen set of their fields (`--grower`, `--fields`, `--exclude-fields`). It writes PNG figures, CSV tables, `findings.json` and a SHA-256 `manifest.json` for field boundaries, USDA CDL crop history and NASA POWER weather, plus a field map and scorecard, under `<runtime>/data-pipeline/shared/eda/field-level-eda/<grower>/`. A one-time report is assembled outside the skill by [`reports/build_eda_report.py`](reports/build_eda_report.py); the Assignment 2 report is in [`reports/assignment-2/`](reports/assignment-2/).
+
 ### 🌱 My Farm Breeding Trial Management
 
 | Area | Examples of work |

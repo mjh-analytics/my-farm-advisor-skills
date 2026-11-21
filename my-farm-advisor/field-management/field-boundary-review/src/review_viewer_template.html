@@ -1,0 +1,426 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Field Boundary Review</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>
+  :root { --bg:#f7f7f5; --panel:#fff; --ink:#1d1d1b; --muted:#6b6b66; --line:#e2e1dc;
+          --warn:#b54708; --warnbg:#fff4e5; --keep:#1a7f37; --keepbg:#e8f5ec; --drop:#b42318; --dropbg:#fdecea; }
+  * { box-sizing:border-box; }
+  body { margin:0; font:13px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; color:var(--ink); background:var(--bg); }
+  #app { display:grid; grid-template-columns:minmax(560px, 44vw) 1fr; height:100vh; }
+  #side { overflow:auto; border-right:1px solid var(--line); background:var(--panel); }
+  #map { height:100vh; }
+  header { padding:14px 16px 8px; border-bottom:1px solid var(--line); background:var(--panel); }
+  h1 { font-size:16px; margin:0 0 6px; }
+  .sub { color:var(--muted); font-size:12px; }
+  .tabs { display:flex; gap:6px; margin-top:8px; flex-wrap:wrap; align-items:center; }
+  .tabs button, .btn { border:1px solid var(--line); background:#fff; border-radius:6px; padding:4px 10px; cursor:pointer; font:inherit; }
+  .tabs button.on { background:var(--ink); color:#fff; border-color:var(--ink); }
+  .btn.primary { background:var(--ink); color:#fff; border-color:var(--ink); }
+  .farmwarn { margin:8px 16px 0; padding:8px 10px; background:var(--warnbg); color:var(--warn); border-radius:6px; font-size:12px; }
+  table { width:100%; border-collapse:collapse; }
+  th, td { padding:5px 6px; border-bottom:1px solid var(--line); text-align:left; vertical-align:middle; }
+  th { font-size:11px; color:var(--muted); font-weight:600; position:sticky; top:0; background:var(--panel); cursor:pointer; z-index:1; }
+  td.num, th.num { text-align:right; font-variant-numeric:tabular-nums; }
+  tr.row { cursor:pointer; } tr.row:hover { background:#f2f1ec; } tr.sel { background:#e9eefc !important; }
+  tr.keep td:first-child { box-shadow:inset 3px 0 var(--keep); } tr.drop td:first-child { box-shadow:inset 3px 0 var(--drop); }
+  tr.drop td:not(.edit) { opacity:.55; }
+  .dot { display:inline-block; width:9px; height:9px; border-radius:50%; margin-right:6px; }
+  .flag { color:var(--warn); font-size:11px; }
+  select.dec { font:inherit; padding:2px 4px; border:1px solid var(--line); border-radius:5px; background:#fff; }
+  select.dec.keep { background:var(--keepbg); color:var(--keep); border-color:var(--keep); }
+  select.dec.drop { background:var(--dropbg); color:var(--drop); border-color:var(--drop); }
+  input.cmt { width:100%; min-width:140px; font:inherit; padding:3px 6px; border:1px solid var(--line); border-radius:5px; }
+  #detail { padding:12px 16px 24px; border-top:2px solid var(--line); }
+  #detail h2 { font-size:15px; margin:0 0 4px; }
+  dl { display:grid; grid-template-columns:120px 1fr; gap:3px 10px; margin:8px 0; }
+  dt { color:var(--muted); }
+  .imgs img { width:100%; border:1px solid var(--line); border-radius:4px; margin:4px 0 10px; cursor:zoom-in; }
+  .leaflet-tooltip.lbl { background:rgba(0,0,0,.65); color:#fff; border:0; box-shadow:none; font-size:11px; padding:1px 5px; }
+  .leaflet-tooltip.lbl::before { display:none; }
+  #pinMode.on, #lineMode.on { background:#7a3cff; color:#fff; border-color:#7a3cff; }
+  #lineFinish { background:#00a86b; color:#fff; border-color:#00a86b; }
+  #map.pinning, #map.pinning .leaflet-interactive { cursor:crosshair !important; }
+  .pinpop select, .pinpop textarea { width:100%; font:inherit; margin:4px 0; }
+  .pinpop textarea { min-height:52px; }
+  .pinlist { margin:6px 0 10px; padding-left:18px; }
+  @media (max-width: 900px) { #app { grid-template-columns:1fr; height:auto; } #map { height:55vh; order:-1; } #side { border-right:0; } }
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="side">
+    <header>
+      <h1>Field Boundary Review</h1>
+      <div class="sub" id="summary"></div>
+      <div class="tabs" id="tabs"></div>
+      <div class="tabs">
+        <label><input type="checkbox" id="onlyFlag"> only flagged</label>
+        <label><input type="checkbox" id="onlyUndecided"> only undecided</label>
+        <label><input type="checkbox" id="showLabels" checked> labels on map</label>
+        <button class="btn primary" id="export">Export QC CSV</button>
+      </div>
+      <div class="tabs pinbar">
+        <button class="btn" id="pinMode">📍 Pin</button>
+        <select id="pinType" class="dec">
+          <option value="extend">Extend boundary to here</option>
+          <option value="exclude">Exclude this (building, yard, waterway)</option>
+          <option value="note">Other note</option>
+        </select>
+      </div>
+      <div class="tabs pinbar">
+        <button class="btn" id="lineMode">✏️ Line</button>
+        <select id="lineType" class="dec">
+          <option value="edge">Boundary should follow this line (extend or trim)</option>
+          <option value="exclude">Cut out the area I outline</option>
+          <option value="note">Other note</option>
+        </select>
+        <button class="btn" id="lineFinish" style="display:none">Finish line</button>
+      </div>
+      <div class="tabs pinbar">
+        <span class="sub" id="toolHelp">Pick 📍 Pin or ✏️ Line to mark up the map.</span>
+      </div>
+      <div class="tabs pinbar">
+        <button class="btn primary" id="exportPins">Export pins &amp; lines CSV</button>
+        <span class="sub" id="pinCount"></span>
+      </div>
+    </header>
+    <div id="farmIssues"></div>
+    <table>
+      <thead><tr>
+        <th data-k="label">Field</th><th class="num" data-k="acres">Acres</th>
+        <th class="num" data-k="compact">Fill</th><th data-k="flags">Flags</th>
+        <th data-k="status">Keep / Drop</th><th data-k="note">Comment</th>
+      </tr></thead>
+      <tbody id="rows"></tbody>
+    </table>
+    <div id="detail"><span class="sub">Click a field on the map or a row in the table to zoom in and see its details.</span></div>
+  </div>
+  <div id="map"></div>
+</div>
+<script>
+const DATA = __DATA__;
+const FARM_ISSUES = __FARM_ISSUES__;
+const COLORS = {"illinois-grower":"#e4572e","iowa-grower":"#2e86de","nebraska-grower":"#f2c14e"};
+const KEY = "fieldqc.v2";
+let qc = {}; try { qc = JSON.parse(localStorage.getItem(KEY) || "{}"); } catch(e) {}
+const saveQC = () => { try { localStorage.setItem(KEY, JSON.stringify(qc)); } catch(e) {} };
+const id = p => p.grower + "/" + p.field;
+const esc = s => String(s ?? "").replace(/&/g,"&amp;").replace(/"/g,"&quot;").replace(/</g,"&lt;");
+
+const map = L.map("map", {preferCanvas:true});
+L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+  {maxZoom:19, attribution:"Imagery © Esri"}).addTo(map);
+L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}",
+  {maxZoom:19, opacity:.7}).addTo(map);
+
+const layers = {};
+function style(p, sel) {
+  const s = qc[id(p)]?.status;
+  const c = s === "keep" ? "#3ddc84" : s === "drop" ? "#ff4d4d" : (COLORS[p.grower] || "#0f0");
+  return {color: sel ? "#fff" : c, weight: sel ? 4 : 2, fillColor: c,
+          fillOpacity: s === "drop" ? .05 : .12, dashArray: s === "drop" ? "4 4" : null};
+}
+const geo = L.geoJSON(DATA, {
+  style: f => style(f.properties),
+  onEachFeature: (f, lyr) => {
+    layers[id(f.properties)] = lyr;
+    lyr.bindTooltip(f.properties.label, {permanent:true, direction:"center", className:"lbl"});
+    lyr.on("click", e => { if (tool) { L.DomEvent.stopPropagation(e); toolClick(e.latlng); } else select(id(f.properties)); });
+  }
+}).addTo(map);
+map.fitBounds(geo.getBounds());
+// original (pre-cleanup) outlines, dashed white
+DATA.features.filter(f => f.properties.orig).forEach(f =>
+  L.geoJSON(f.properties.orig, {style:{color:"#fff", weight:1.5, dashArray:"3 4", fill:false}, interactive:false}).addTo(map));
+// ---------- pins ----------
+const PIN_KEY = "fieldqc.pins.v1";
+const PIN_COLORS = {extend:"#3ddc84", exclude:"#ff4d4d", note:"#ffd400"};
+const PIN_NAMES = {extend:"Extend boundary to here", exclude:"Exclude this", note:"Other note"};
+let pins = []; try { pins = JSON.parse(localStorage.getItem(PIN_KEY) || "[]"); } catch(e) {}
+const savePins = () => { try { localStorage.setItem(PIN_KEY, JSON.stringify(pins)); } catch(e) {} };
+let tool = null;  // null | "pin" | "line"
+const pinMarkers = {};
+function inRing(pt, ring) { let c = false; for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+  const [xi, yi] = ring[i], [xj, yj] = ring[j];
+  if ((yi > pt[1]) !== (yj > pt[1]) && pt[0] < (xj - xi) * (pt[1] - yi) / (yj - yi) + xi) c = !c; } return c; }
+function fieldFor(latlng) {
+  const pt = [latlng.lng, latlng.lat]; let best = null, bestD = Infinity;
+  for (const f of DATA.features) {
+    const g = f.geometry, polys = g.type === "Polygon" ? [g.coordinates] : g.coordinates;
+    if (polys.some(pl => inRing(pt, pl[0]))) return f.properties;
+    const c = layers[id(f.properties)].getBounds().getCenter();
+    const d = map.distance(latlng, c); if (d < bestD) { bestD = d; best = f.properties; }
+  }
+  return bestD < 1500 ? best : null;
+}
+function drawPin(pin) {
+  const m = L.circleMarker([pin.lat, pin.lng], {radius:7, weight:2, color:"#000", fillColor:PIN_COLORS[pin.type], fillOpacity:1}).addTo(map);
+  m.bindTooltip(`${pin.field_label || "?"} · ${PIN_NAMES[pin.type]}`);
+  m.bindPopup(() => {
+    const div = L.DomUtil.create("div", "pinpop");
+    div.innerHTML = `<b>${pin.field_label || "No field"}</b> <span class="sub">${pin.lat.toFixed(6)}, ${pin.lng.toFixed(6)}</span>
+      <select>${Object.entries(PIN_NAMES).map(([k,v]) => `<option value="${k}" ${pin.type===k?"selected":""}>${v}</option>`).join("")}</select>
+      <textarea placeholder="e.g. edge of field is the fence line here">${esc(pin.note)}</textarea>
+      <button class="btn">Delete pin</button>`;
+    div.querySelector("select").onchange = e => { pin.type = e.target.value; m.setStyle({fillColor:PIN_COLORS[pin.type]}); savePins(); refreshPins(); };
+    div.querySelector("textarea").oninput = e => { pin.note = e.target.value; savePins(); };
+    div.querySelector("button").onclick = () => { pins = pins.filter(p => p.id !== pin.id); map.removeLayer(m); delete pinMarkers[pin.id]; savePins(); refreshPins(); };
+    return div;
+  });
+  m.on("click", e => L.DomEvent.stopPropagation(e));  // don't also drop a pin / add a line point
+  pinMarkers[pin.id] = m; return m;
+}
+function addPin(latlng) {
+  const f = fieldFor(latlng);
+  const pin = {id: Date.now().toString(36) + Math.random().toString(36).slice(2,6), lat: +latlng.lat.toFixed(7), lng: +latlng.lng.toFixed(7),
+    type: document.getElementById("pinType").value, note: "", zoom: map.getZoom(), grower: f?.grower || "", field_id: f?.field || "", field_label: f?.label || ""};
+  pins.push(pin); savePins(); drawPin(pin).openPopup(); refreshPins();
+}
+// ---------- lines ----------
+const LINE_KEY = "fieldqc.lines.v1";
+const LINE_COLORS = {edge:"#00e5ff", exclude:"#ff4d4d", note:"#ffd400"};
+const LINE_NAMES = {edge:"Boundary should follow this line", exclude:"Cut out outlined area", note:"Other note"};
+let lines = []; try { lines = JSON.parse(localStorage.getItem(LINE_KEY) || "[]"); } catch(e) {}
+const saveLines = () => { try { localStorage.setItem(LINE_KEY, JSON.stringify(lines)); } catch(e) {} };
+const lineLayers = {};
+let draft = null;  // {coords:[], layer, verts:L.LayerGroup}
+function drawLine(ln) {
+  const closed = ln.type === "exclude";
+  const lyr = (closed ? L.polygon(ln.coords, {color:LINE_COLORS[ln.type], weight:3, fillOpacity:.25})
+                      : L.polyline(ln.coords, {color:LINE_COLORS[ln.type], weight:4})).addTo(map);
+  lyr.bindTooltip(`${ln.field_label || "?"} · ${LINE_NAMES[ln.type]}`, {sticky:true});
+  lyr.bindPopup(() => {
+    const div = L.DomUtil.create("div", "pinpop");
+    div.innerHTML = `<b>${ln.field_label || "No field"}</b> <span class="sub">${ln.coords.length} points</span>
+      <select>${Object.entries(LINE_NAMES).map(([k,v]) => `<option value="${k}" ${ln.type===k?"selected":""}>${v}</option>`).join("")}</select>
+      <textarea placeholder="e.g. true edge is the fence line">${esc(ln.note)}</textarea>
+      <button class="btn">Delete line</button>`;
+    div.querySelector("select").onchange = e => { ln.type = e.target.value; saveLines(); map.removeLayer(lyr); drawLine(ln).openPopup(); refreshPins(); };
+    div.querySelector("textarea").oninput = e => { ln.note = e.target.value; saveLines(); };
+    div.querySelector("button").onclick = () => { lines = lines.filter(x => x.id !== ln.id); map.removeLayer(lyr); delete lineLayers[ln.id]; saveLines(); refreshPins(); };
+    return div;
+  });
+  lyr.on("click", e => { if (!tool) L.DomEvent.stopPropagation(e); });  // while drawing, clicks still add points
+  lineLayers[ln.id] = lyr; return lyr;
+}
+function startDraft() {
+  draft = {coords: [], layer: L.polyline([], {color:"#fff", weight:3, dashArray:"6 6"}).addTo(map), verts: L.layerGroup().addTo(map)};
+}
+function draftAdd(latlng) {
+  if (!draft) startDraft();
+  const last = draft.coords[draft.coords.length - 1];
+  if (last && map.distance(last, latlng) < 0.5) return;  // ignore double-click duplicates
+  draft.coords.push([+latlng.lat.toFixed(7), +latlng.lng.toFixed(7)]);
+  draft.minZoom = Math.min(draft.minZoom ?? 99, map.getZoom());
+  draft.layer.setLatLngs(draft.coords);
+  L.circleMarker(latlng, {radius:4, color:"#000", weight:1, fillColor:"#fff", fillOpacity:1, interactive:false}).addTo(draft.verts);
+  document.getElementById("lineFinish").style.display = draft.coords.length >= 2 ? "" : "none";
+}
+function draftCancel() { if (draft) { map.removeLayer(draft.layer); map.removeLayer(draft.verts); } draft = null;
+  document.getElementById("lineFinish").style.display = "none"; }
+function draftUndo() { if (!draft || !draft.coords.length) return; draft.coords.pop(); draft.layer.setLatLngs(draft.coords);
+  const vs = draft.verts.getLayers(); if (vs.length) draft.verts.removeLayer(vs[vs.length - 1]);
+  document.getElementById("lineFinish").style.display = draft.coords.length >= 2 ? "" : "none"; }
+function draftFinish() {
+  if (!draft || draft.coords.length < 2) return;
+  const type = document.getElementById("lineType").value;
+  if (type === "exclude" && draft.coords.length < 3) { alertHelp("An outlined area needs at least 3 points."); return; }
+  const votes = {};
+  draft.coords.forEach(c => { const f = fieldFor(L.latLng(c[0], c[1])); if (f) votes[id(f)] = (votes[id(f)] || 0) + 1; });
+  const top = Object.entries(votes).sort((a,b) => b[1] - a[1])[0];
+  const f = top ? layers[top[0]].feature.properties : null;
+  const ln = {id: Date.now().toString(36) + Math.random().toString(36).slice(2,6), type, coords: draft.coords, note: "", zoom: draft.minZoom,
+    grower: f?.grower || "", field_id: f?.field || "", field_label: f?.label || ""};
+  draftCancel(); lines.push(ln); saveLines(); drawLine(ln).openPopup(); refreshPins();
+}
+function alertHelp(msg) { document.getElementById("toolHelp").textContent = msg; }
+// ---------- tool switching ----------
+const HELP = {
+  null: "Pick 📍 Pin or ✏️ Line to mark up the map.",
+  pin: "Pin mode: click the map to drop a pin. Click 📍 Pin again to stop.",
+  line: "Line mode: click to add points · double-click or Finish line to end · Backspace = undo point · Esc = cancel."
+};
+function setTool(t) {
+  if (tool === "line" && t !== "line") draftCancel();
+  tool = (tool === t) ? null : t;
+  document.getElementById("pinMode").classList.toggle("on", tool === "pin");
+  document.getElementById("lineMode").classList.toggle("on", tool === "line");
+  document.getElementById("map").classList.toggle("pinning", !!tool);
+  tool === "line" ? map.doubleClickZoom.disable() : map.doubleClickZoom.enable();
+  alertHelp(HELP[tool]);
+}
+function toolClick(latlng) { if (tool === "pin") addPin(latlng); else if (tool === "line") draftAdd(latlng); }
+document.getElementById("pinMode").onclick = () => setTool("pin");
+document.getElementById("lineMode").onclick = () => setTool("line");
+document.getElementById("lineFinish").onclick = draftFinish;
+map.on("click", e => { if (tool) toolClick(e.latlng); });
+map.on("dblclick", e => { if (tool === "line") { L.DomEvent.stop(e); draftFinish(); } });
+document.addEventListener("keydown", e => {
+  if (tool !== "line" || ["INPUT","TEXTAREA","SELECT"].includes(document.activeElement.tagName)) return;
+  if (e.key === "Enter") draftFinish(); else if (e.key === "Escape") draftCancel();
+  else if (e.key === "Backspace") { e.preventDefault(); draftUndo(); }
+});
+
+function refreshPins() {
+  const n = [pins.length && `${pins.length} pin${pins.length>1?"s":""}`, lines.length && `${lines.length} line${lines.length>1?"s":""}`].filter(Boolean);
+  document.getElementById("pinCount").textContent = n.join(" · ");
+  if (selected) { const el = document.getElementById("fieldPins"); if (el) el.innerHTML = pinListHTML(selected); }
+}
+const pinListHTML = fid => {
+  const ps = pins.filter(p => p.grower + "/" + p.field_id === fid), ls = lines.filter(l => l.grower + "/" + l.field_id === fid);
+  const del = (kind, mid) => ` <button class="btn delmark" data-kind="${kind}" data-mid="${mid}" title="Delete" style="padding:0 6px">×</button>`;
+  const items = ps.map(p => `<li><span class="dot" style="background:${PIN_COLORS[p.type]}"></span>📍 ${PIN_NAMES[p.type]}${p.note ? " – " + esc(p.note) : ""}${del("pin", p.id)}</li>`)
+    .concat(ls.map(l => `<li><span class="dot" style="background:${LINE_COLORS[l.type]}"></span>✏️ ${LINE_NAMES[l.type]}${l.note ? " – " + esc(l.note) : ""}${del("line", l.id)}</li>`));
+  return items.length ? `<div class="sub">Markups on this field</div><ol class="pinlist">${items.join("")}</ol>` : ""; };
+function deleteMark(kind, mid) {
+  if (kind === "pin") { if (pinMarkers[mid]) map.removeLayer(pinMarkers[mid]); delete pinMarkers[mid]; pins = pins.filter(p => p.id !== mid); savePins(); }
+  else { if (lineLayers[mid]) map.removeLayer(lineLayers[mid]); delete lineLayers[mid]; lines = lines.filter(l => l.id !== mid); saveLines(); }
+  map.closePopup(); refreshPins();
+}
+document.getElementById("detail").addEventListener("click", e => {
+  const b = e.target.closest(".delmark"); if (b) deleteMark(b.dataset.kind, b.dataset.mid); });
+pins.forEach(drawPin);
+lines.forEach(drawLine);
+document.getElementById("exportPins").onclick = () => {
+  const q = s => `"${String(s ?? "").replace(/"/g,'""')}"`;
+  const wkt = l => l.type === "exclude"
+    ? `POLYGON((${l.coords.concat([l.coords[0]]).map(c => c[1] + " " + c[0]).join(", ")}))`
+    : `LINESTRING(${l.coords.map(c => c[1] + " " + c[0]).join(", ")})`;
+  const rows = [["kind","grower","label","field_id","type","lat","lon","wkt","note","zoom"]]
+    .concat(pins.map(p => ["pin", p.grower, p.field_label, p.field_id, p.type, p.lat, p.lng, `POINT(${p.lng} ${p.lat})`, p.note, p.zoom ?? ""]))
+    .concat(lines.map(l => ["line", l.grower, l.field_label, l.field_id, l.type, "", "", wkt(l), l.note, l.zoom ?? ""]));
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([rows.map(r => r.map(q).join(",")).join("\n")], {type:"text/csv"}));
+  a.download = "field_qc_markups.csv"; a.click();
+};
+
+document.getElementById("showLabels").onchange = e =>
+  Object.values(layers).forEach(l => e.target.checked ? l.openTooltip() : l.closeTooltip());
+
+let grower = "all", sortK = null, sortDir = 1, selected = null;
+const growers = [...new Set(DATA.features.map(f => f.properties.grower))];
+const tabs = document.getElementById("tabs");
+["all", ...growers].forEach(g => {
+  const b = document.createElement("button");
+  const name = g === "all" ? "All growers" : g.replace("-grower","");
+  b.innerHTML = (g === "all" ? "" : `<span class="dot" style="background:${COLORS[g]}"></span>`) + name;
+  b.onclick = () => { grower = g; [...tabs.children].forEach(x => x.classList.remove("on")); b.classList.add("on");
+    const fs = DATA.features.filter(f => g === "all" || f.properties.grower === g);
+    map.fitBounds(L.geoJSON({type:"FeatureCollection", features:fs}).getBounds(), {padding:[20,20]}); render(); };
+  if (g === "all") b.classList.add("on");
+  tabs.appendChild(b);
+});
+if (FARM_ISSUES.length) document.getElementById("farmIssues").innerHTML =
+  `<div class="farmwarn"><b>Farm metadata:</b><br>${FARM_ISSUES.join("<br>")}</div>`;
+document.getElementById("onlyFlag").onchange = render;
+document.getElementById("onlyUndecided").onchange = render;
+document.querySelectorAll("th[data-k]").forEach(th => th.onclick = () => {
+  const k = th.dataset.k; sortDir = sortK === k ? -sortDir : 1; sortK = k; render(); });
+
+function setDecision(fid, patch) {
+  qc[fid] = {...(qc[fid] || {}), ...patch}; saveQC();
+  const lyr = layers[fid]; lyr.setStyle(style(lyr.feature.properties, fid === selected));
+  // sync every control bound to this field without re-rendering (keeps typing focus)
+  document.querySelectorAll(`[data-fid="${CSS.escape(fid)}"]`).forEach(el => {
+    if (el.classList.contains("dec")) { el.value = qc[fid].status || ""; el.className = "dec " + (qc[fid].status || ""); }
+    if (el.classList.contains("cmt") && el !== document.activeElement) el.value = qc[fid].note || "";
+  });
+  const tr = document.querySelector(`tr[data-id="${CSS.escape(fid)}"]`);
+  if (tr) { tr.classList.remove("keep","drop"); if (qc[fid].status) tr.classList.add(qc[fid].status); }
+  summary();
+}
+const decSelect = fid => { const s = qc[fid]?.status || "";
+  return `<select class="dec ${s}" data-fid="${esc(fid)}">
+    <option value="" ${!s?"selected":""}>—</option><option value="keep" ${s==="keep"?"selected":""}>Keep</option>
+    <option value="drop" ${s==="drop"?"selected":""}>Drop</option></select>`; };
+const cmtInput = fid => `<input class="cmt" data-fid="${esc(fid)}" placeholder="e.g. extend west edge" value="${esc(qc[fid]?.note)}">`;
+function bindControls(root) {
+  root.querySelectorAll("select.dec").forEach(el => {
+    el.onclick = e => e.stopPropagation();
+    el.onchange = () => setDecision(el.dataset.fid, {status: el.value}); });
+  root.querySelectorAll("input.cmt").forEach(el => {
+    el.onclick = e => e.stopPropagation();
+    el.oninput = () => setDecision(el.dataset.fid, {note: el.value}); });
+}
+function summary() {
+  const parts = growers.map(g => {
+    const fs = DATA.features.filter(f => f.properties.grower === g);
+    const k = fs.filter(f => qc[id(f.properties)]?.status === "keep").length;
+    const d = fs.filter(f => qc[id(f.properties)]?.status === "drop").length;
+    return `${g.replace("-grower","")}: ${k} keep · ${d} drop · ${fs.length-k-d} undecided`; });
+  document.getElementById("summary").textContent = parts.join("  |  ");
+}
+
+function render() {
+  const onlyF = document.getElementById("onlyFlag").checked, onlyU = document.getElementById("onlyUndecided").checked;
+  let fs = DATA.features.map(f => f.properties).filter(p => (grower === "all" || p.grower === grower)
+    && (!onlyF || p.flags.length) && (!onlyU || !qc[id(p)]?.status));
+  if (sortK) fs.sort((a,b) => {
+    const get = p => sortK === "flags" ? p.flags.length : sortK === "status" ? (qc[id(p)]?.status || "")
+      : sortK === "note" ? (qc[id(p)]?.note || "") : p[sortK];
+    const va = get(a), vb = get(b); return (va > vb ? 1 : va < vb ? -1 : 0) * sortDir; });
+  const tb = document.getElementById("rows");
+  tb.innerHTML = fs.map(p => { const fid = id(p), s = qc[fid]?.status || "";
+    return `<tr class="row ${s} ${selected === fid ? "sel" : ""}" data-id="${esc(fid)}">
+      <td><span class="dot" style="background:${COLORS[p.grower]}"></span><b>${p.label}</b>${p.edit ? ' <span class="sub" title="${esc(p.edit)}">✎ cleaned</span>' : ""}</td>
+      <td class="num">${p.acres}</td><td class="num">${p.compact}</td>
+      <td class="flag" title="${esc(p.flags.join("; "))}">${p.flags.length ? "⚠ " + p.flags.length : ""}</td>
+      <td class="edit">${decSelect(fid)}</td><td class="edit">${cmtInput(fid)}</td></tr>`; }).join("");
+  tb.querySelectorAll("tr.row").forEach(tr => tr.onclick = () => select(tr.dataset.id, true));
+  bindControls(tb); summary();
+}
+
+function select(fid, zoom) {
+  const prev = selected; selected = fid;
+  if (prev && layers[prev]) layers[prev].setStyle(style(layers[prev].feature.properties));
+  const lyr = layers[fid], p = lyr.feature.properties;
+  lyr.setStyle(style(p, true)); lyr.bringToFront();
+  // keep markups above the selected field so they stay clickable
+  Object.values(lineLayers).forEach(l => l.bringToFront());
+  Object.values(pinMarkers).forEach(m => m.bringToFront());
+  if (zoom) map.fitBounds(lyr.getBounds(), {maxZoom:17, padding:[40,40]});
+  document.querySelectorAll("tr.row").forEach(tr => tr.classList.toggle("sel", tr.dataset.id === fid));
+  document.querySelector(`tr[data-id="${CSS.escape(fid)}"]`)?.scrollIntoView({block:"nearest"});
+  const d = document.getElementById("detail");
+  d.innerHTML = `
+    <h2>${p.label} <span class="sub">${p.field}</span></h2>
+    <div class="sub">${p.grower} · ${p.farm} · ${p.county} Co. (FIPS ${p.state_fips})</div>
+    ${p.flags.length ? `<div class="farmwarn" style="margin:8px 0">${p.flags.map(f => "⚠ " + f).join("<br>")}</div>` : ""}
+    <div class="tabs" style="margin:10px 0">${decSelect(fid)} ${cmtInput(fid)}</div>
+    <div id="fieldPins">${pinListHTML(fid)}</div>
+    <dl>
+      <dt>Boundary source</dt><dd>${p.source}${p.downloaded ? "" : ' <span class="flag">· data not downloaded yet</span>'}</dd>
+      <dt>Acres</dt><dd>${p.acres}</dd>
+      ${p.edit ? `<dt>Boundary edit</dt><dd>${p.edit} <span class="sub">(dashed white = original CSB outline)</span></dd>` : ""}
+      <dt>Shape fill</dt><dd>${p.compact} <span class="sub">(1.0 = rectangle; pivots ≈ 0.79)</span></dd>
+      <dt>CSB crop label</dt><dd>${p.csb_crop || "–"}</dd>
+      ${p.downloaded ? `
+      <dt>Rotation</dt><dd>${p.rotation || "–"}</dd>
+      <dt>Corn / soy yrs</dt><dd>${p.corn_years ?? "–"} / ${p.soy_years ?? "–"}</dd>
+      <dt>Dominant soil</dt><dd>${p.dominant_soil} <span class="sub">${p.drainage}</span></dd>
+      <dt>Weather days</dt><dd>${p.weather_days}</dd>
+      <dt>Scenes</dt><dd>Landsat ${p.landsat} · Sentinel ${p.sentinel}</dd>` : ""}
+    </dl>
+    <div class="imgs">${Object.entries(p.imgs).map(([k,v]) =>
+      `<div class="sub">${k}</div><a href="${v}" target="_blank"><img loading="lazy" src="${v}" alt="${k}"></a>`).join("")}</div>`;
+  bindControls(d);
+}
+
+document.getElementById("export").onclick = () => {
+  const q = s => `"${String(s ?? "").replace(/"/g,'""')}"`;
+  const rows = [["grower","label","field_id","acres","shape_fill","flags","decision","comment"]].concat(
+    DATA.features.map(f => { const p = f.properties, d = qc[id(p)] || {};
+      return [p.grower,p.label,p.field,p.acres,p.compact,p.flags.join("; "),d.status,d.note]; }));
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([rows.map(r => r.map(q).join(",")).join("\n")], {type:"text/csv"}));
+  a.download = "field_qc_decisions.csv"; a.click();
+};
+render(); refreshPins();
+</script>
+</body>
+</html>

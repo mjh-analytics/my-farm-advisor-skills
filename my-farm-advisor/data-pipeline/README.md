@@ -16,6 +16,28 @@ subfolder per output family (`field-maps/`, `soil-maps/`, `maturity/`,
 runtime artifacts stay outside the repo under `DATA_PIPELINE_DATA_ROOT`
 (see `ASSET_POLICY.md` at the repo root).
 
+## Grower field map
+
+`src/scripts/reporting/generate_grower_web_map.py` renders one self-contained
+HTML map per grower: every farm and field on Esri World Imagery, a filterable
+field list, click-to-zoom, and a panel with 2021–2025 crop rotation and SSURGO
+soil summaries. It reads existing runtime outputs only and embeds the geometry
+and metadata in the HTML, so the file is typically 20–30 KB.
+
+```bash
+export DATA_PIPELINE_DATA_ROOT=/absolute/path/to/my-farm-advisor-runtime
+cd "${DATA_PIPELINE_DATA_ROOT}/data-pipeline/src"
+"${DATA_PIPELINE_DATA_ROOT}/data-pipeline/.venv/bin/python" \
+  scripts/reporting/generate_grower_web_map.py --grower-slug illinois-grower
+```
+
+Output:
+`${DATA_PIPELINE_DATA_ROOT}/data-pipeline/growers/<grower>/derived/reports/<grower>_field_map.html`.
+
+See [grower-field-map/GUIDE.md](grower-field-map/GUIDE.md) for inputs and
+verification, and [grower-field-map/COMPARISON.md](grower-field-map/COMPARISON.md)
+for the Leaflet-versus-D3 decision.
+
 
 ## Global parity in one paragraph
 

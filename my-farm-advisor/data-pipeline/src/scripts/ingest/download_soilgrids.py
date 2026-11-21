@@ -21,6 +21,7 @@ import argparse
 import json
 import os
 import sys
+import time
 from pathlib import Path
 
 import geopandas as gpd
@@ -176,6 +177,21 @@ def _merge_stats_table(rows: list[dict]) -> pd.DataFrame:
     return new
 
 
+def _clip_with_retry(*args, attempts: int = 4, **kwargs) -> dict:
+    """ISRIC's VRT/COG endpoint intermittently drops range reads
+    (rasterio "Cannot read N bytes"); retry with backoff before failing."""
+    for attempt in range(1, attempts + 1):
+        try:
+            return sg.clip_bbox(*args, **kwargs)
+        except sg.rasterio.errors.RasterioIOError as exc:
+            if attempt == attempts:
+                raise
+            wait = 15 * attempt
+            print(f"retry {attempt}/{attempts - 1} after read error ({exc}); sleeping {wait}s")
+            time.sleep(wait)
+    raise RuntimeError("unreachable")
+
+
 def main():
     args = parse_args()
     grower_slug = validate_path_slug(args.grower, "grower_slug")
@@ -222,7 +238,7 @@ def main():
                     skipped += 1
                     print(f"skip  {field_slug} {band} {depth} (exists: {raster_path})")
                     continue
-                record = sg.clip_bbox(
+                record = _clip_with_retry(
                     band,
                     depth,
                     bbox,

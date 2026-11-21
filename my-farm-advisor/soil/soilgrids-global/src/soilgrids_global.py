@@ -39,6 +39,8 @@ from __future__ import annotations
 import hashlib
 import math
 import os
+import time
+import urllib.request
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Iterable
@@ -135,6 +137,51 @@ def gdal_version() -> str:
 def vrt_url(band: str, depth: str) -> str:
     """Canonical band VRT URL, e.g. .../clay/clay_0-5cm_mean.vrt."""
     return f"{SOURCE_BASE}/{band}/{band}_{depth}_mean.vrt"
+
+
+def _vrt_cache_dir() -> Path | None:
+    """Local cache for rewritten band VRTs; SOILGRIDS_VRT_CACHE=0 disables it."""
+    if os.environ.get("SOILGRIDS_VRT_CACHE", "1") == "0":
+        return None
+    root = os.environ.get("DATA_PIPELINE_DATA_ROOT")
+    base = Path(root) / "shared" / "soilgrids" / "vrt_cache" if root else Path.home() / ".cache" / "soilgrids-vrt"
+    base.mkdir(parents=True, exist_ok=True)
+    return base
+
+
+def open_target(band: str, depth: str, attempts: int = 5) -> str:
+    """Return a path GDAL should open for one band/depth.
+
+    The ISRIC band VRTs are ~6 MB XML indexes. GDAL's /vsicurl reader
+    intermittently fails mid-read on them ("Cannot read N bytes") even when a
+    plain HTTP GET succeeds, so the VRT is fetched once with urllib (with
+    retries), its relative tile paths are rewritten to absolute /vsicurl/
+    URLs, and the local copy is opened. Tiles are still streamed remotely.
+    Falls back to the remote URL when caching is disabled.
+    """
+    url = vrt_url(band, depth)
+    cache = _vrt_cache_dir()
+    if cache is None:
+        return url
+    local = cache / f"{band}_{depth}_mean.vrt"
+    if local.exists() and local.stat().st_size > 0:
+        return str(local)
+    prefix = f"/vsicurl/{SOURCE_BASE}/{band}/"
+    for attempt in range(1, attempts + 1):
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": "my-farm-advisor/1.0 (soilgrids-global)"})
+            with urllib.request.urlopen(req, timeout=300) as resp:
+                text = resp.read().decode("utf-8")
+            break
+        except Exception:
+            if attempt == attempts:
+                raise
+            time.sleep(10 * attempt)
+    text = text.replace('relativeToVRT="1">./', f'relativeToVRT="0">{prefix}')
+    tmp = local.with_suffix(".vrt.part")
+    tmp.write_text(text, encoding="utf-8")
+    tmp.replace(local)
+    return str(local)
 
 
 def band_spec(band: str) -> dict[str, Any]:
@@ -238,7 +285,7 @@ def clip_bbox(
     env_vars = dict(GDAL_ENV)
     env_vars.update({k: v for k, v in os.environ.items() if k.startswith("GDAL_")})
     with rasterio.Env(**env_vars):
-        with rasterio.open(url) as src:
+        with rasterio.open(open_target(band, depth)) as src:
             window = _source_window(src, bbox)
             # one source pixel is 250 m; the latitude degree is the stable
             # linear unit for the destination grid

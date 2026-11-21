@@ -265,6 +265,34 @@ def ensure_canonical_field_artifacts(
     _write_text(base / "logs" / "pipeline_runs.jsonl", "", overwrite=False)
 
 
+_STATE_FIPS_TO_ABBR = {
+    "17": "IL", "18": "IN", "19": "IA", "20": "KS", "26": "MI", "27": "MN",
+    "29": "MO", "31": "NE", "38": "ND", "39": "OH", "46": "SD", "55": "WI",
+}
+
+
+def _infer_farm_state(farm: Path) -> str:
+    """Farm state from the boundary's state_fips; else keep the existing farm.json value."""
+    boundary = farm / "boundary" / "field_boundaries.geojson"
+    if boundary.exists():
+        try:
+            feats = json.loads(boundary.read_text()).get("features", [])
+            fips = [str((f.get("properties") or {}).get("state_fips") or "") for f in feats]
+            fips = [f for f in fips if f]
+            if fips:
+                top = max(set(fips), key=fips.count)
+                return _STATE_FIPS_TO_ABBR.get(top, top)
+        except (OSError, ValueError):
+            pass
+    existing = farm / "farm.json"
+    if existing.exists():
+        try:
+            return str(json.loads(existing.read_text()).get("state") or "")
+        except (OSError, ValueError):
+            pass
+    return ""
+
+
 def ensure_canonical_data_tree(
     grower_slug: str = DEFAULT_GROWER,
     farm_slug: str = DEFAULT_FARM,
@@ -412,7 +440,7 @@ def ensure_canonical_data_tree(
             "grower_slug": grower_slug,
             "farm_slug": farm_slug,
             "display_name": farm_name,
-            "state": "IA",
+            "state": _infer_farm_state(farm),
             "country": "US",
             "default_crs": "EPSG:4326",
             "notes": "Canonical farm metadata",

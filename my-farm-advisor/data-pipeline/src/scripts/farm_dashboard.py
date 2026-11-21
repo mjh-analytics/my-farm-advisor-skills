@@ -302,6 +302,12 @@ def _run_bootstrap_for_counties(
     grower_slug: str,
     farm_slug: str,
     farm_name: str,
+    landuse: str | None = None,
+    min_field_acres: float | None = None,
+    max_field_acres: float | None = None,
+    cdl_crop_codes: str | None = None,
+    cdl_year: int | None = None,
+    cdl_min_share: float | None = None,
 ) -> Path:
     inventory_path = _inventory_path_for_farm(grower_slug, farm_slug)
     distribution = _field_allocation(field_count, len(counties))
@@ -327,6 +333,18 @@ def _run_bootstrap_for_counties(
             "--inventory-csv",
             str(inventory_path),
         ]
+        if landuse:
+            cmd.extend(["--landuse", landuse])
+        if min_field_acres is not None:
+            cmd.extend(["--min-acres", str(min_field_acres)])
+        if max_field_acres is not None:
+            cmd.extend(["--max-acres", str(max_field_acres)])
+        if cdl_crop_codes:
+            cmd.extend(["--cdl-crop-codes", cdl_crop_codes])
+            if cdl_year is not None:
+                cmd.extend(["--cdl-year", str(cdl_year)])
+            if cdl_min_share is not None:
+                cmd.extend(["--cdl-min-share", str(cdl_min_share)])
         if idx > 0:
             cmd.append("--append")
         _run(cmd)
@@ -435,6 +453,12 @@ def create_command(args: argparse.Namespace) -> None:
         grower_slug=args.grower_slug,
         farm_slug=farm_slug,
         farm_name=farm_name,
+        landuse=args.landuse,
+        min_field_acres=args.min_field_acres,
+        max_field_acres=args.max_field_acres,
+        cdl_crop_codes=args.field_cdl_crop_codes,
+        cdl_year=args.cdl_year,
+        cdl_min_share=args.field_cdl_min_share,
     )
     _run_pipeline_for_farm(
         grower_slug=args.grower_slug,
@@ -584,6 +608,19 @@ def build_parser() -> argparse.ArgumentParser:
     create.add_argument("--cdl-scope", choices=["conus", "state"], default="conus")
     create.add_argument("--cdl-latest-year", type=int, default=2025)
     create.add_argument("--cdl-window-years", type=int, default=5)
+    create.add_argument(
+        "--landuse",
+        default=None,
+        help="OSM landuse filter passed to bootstrap (default keeps farmland|orchard|vineyard|meadow)",
+    )
+    create.add_argument("--min-field-acres", type=float, default=None)
+    create.add_argument("--max-field-acres", type=float, default=None)
+    create.add_argument(
+        "--field-cdl-crop-codes",
+        default=None,
+        help="Keep only fields mostly in these CDL codes in --cdl-year (e.g. '1,5' corn,soybeans)",
+    )
+    create.add_argument("--field-cdl-min-share", type=float, default=0.5)
     create.add_argument("--force", action="store_true")
     create.set_defaults(handler=create_command)
 
