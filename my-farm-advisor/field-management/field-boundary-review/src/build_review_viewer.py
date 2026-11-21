@@ -63,6 +63,9 @@ def main() -> int:
     ap.add_argument("--min-fill", type=float, default=0.75, help="flag shapes filling less of their min. rotated rectangle")
     ap.add_argument("--min-cdl-share", type=float, default=0.7)
     ap.add_argument("--weather-days", type=int, default=1826, help="expected daily weather rows per field")
+    ap.add_argument("--storage-prefix", default="fieldqc",
+                    help="browser localStorage key prefix; use a different one for demo copies so they do not "
+                         "share (or overwrite) the markups of a real review")
     ap.add_argument("--label-pool-glob", default="*candidates*.geojson", help="boundary file used to number labels")
     args = ap.parse_args()
 
@@ -153,6 +156,8 @@ def main() -> int:
 
     data = json.dumps({"type": "FeatureCollection", "features": features}, separators=(",", ":"))
     html = TEMPLATE.read_text().replace("__DATA__", data).replace("__FARM_ISSUES__", json.dumps(farm_issues))
+    if args.storage_prefix != "fieldqc":
+        html = html.replace('"fieldqc.', f'"{args.storage_prefix}.')
     out_path.write_text(html)
     print(f"Wrote {out_path} ({out_path.stat().st_size / 1024:.0f} KB), {len(features)} fields")
     for f in features:
